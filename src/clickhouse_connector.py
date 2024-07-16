@@ -28,7 +28,7 @@ class _ClickHousePartition(StatelessSinkPartition):
 
 
 class ClickhouseSink(DynamicSink):
-    def __init__(self, table_name, host, port, username, password, database, schema=None, order_by_fields=''):
+    def __init__(self, table_name, username, password, host="localhost", port=8443, database=None, schema=None, order_by_fields=''):
         self.table_name = table_name
         self.host = host
         self.port = port
@@ -77,11 +77,11 @@ class ClickhouseSink(DynamicSink):
             # Get the table schema
             schema_query = f"""
             SELECT name, type FROM system.columns
-            WHERE database = 'your_database' AND table = '{table_name}'
+            WHERE database = '{self.database}' AND table = '{self.table_name}'
             """
             schema_result = client.query(schema_query)
 
-            logger.info(f"Schema of the table '{table_name}':")
+            logger.info(f"Schema of the table '{self.table_name}':")
             for column in schema_result:
                 logger.info(f"Column: {column['name']}, Type: {column['type']}")
         

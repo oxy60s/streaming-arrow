@@ -3,7 +3,7 @@ from bytewax.connectors.kafka import operators as kop
 from bytewax.dataflow import Dataflow
 import pyarrow as pa
 
-from adbc_connector import ADBCSQLiteSink
+from clickhouse_connector import ClickhouseSink
 
 BROKERS = ["localhost:19092"]
 TOPICS = ["arrow_tables"]
@@ -15,4 +15,4 @@ op.inspect("inspect-oks", kinp.oks)
 
 tables = op.map("tables", kinp.oks, lambda msg: pa.ipc.open_file(msg.value).read_all())
 op.inspect("message_stat_strings", tables, lambda t: f"{t.shape} {t['ts'][0]}")
-op.output("output_sqlite", kinp.oks, ADBCSQLiteSink())
+op.output("output_sqlite", tables, ClickhouseSink("computers", "admin", "pass"))
