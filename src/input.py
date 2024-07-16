@@ -60,7 +60,6 @@ BATCH_SIZE = 1000
 N_BATCHES = 10
 table_gen = (sample_batch_wide_table(BATCH_SIZE) for i in range(N_BATCHES))
 
-
 flow = Dataflow("arrow_producer")
 
 # this is only an example. should use window or collect downstream
