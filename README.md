@@ -2,37 +2,64 @@
 
 <img width="895" alt="streaming_arrow" src="https://github.com/bytewax/streaming-arrow/assets/6073079/227c9577-4467-41c5-9efa-8ba27b1b5e59">
 
-## Background
+A complete streaming architecture with Bytewax, ClickHouse and Redpanda designed around Arrow.
 
-A complete streaming architecture has never been known for its simplicity. And this is something I have always seen as a major detractor from more widespread adoption. It's also hard to square the problem of half my data coming in batches and half of it being in streams. You will suffer from the lowest common denominator problem when you try to bring products to market. The lowest common denominator problem in data is that you will only be able to provide intelligence at the speed or freshness of your slowest data. This might not be an issue for you, but it could be devastating in many instances. Most new features are powered by data, whether through machine intelligence like AI or as an interactive analytical product. Ordering a ride on Uber, looking at content on TikTok, or checking out while purchasing on amazon.com. All of these experiences are powered by data. More specifically, real-time generated data. When you think of the leading companies/products in many industries today, the speed and freshness of data in these products are key determinants of their success. A key part of that is that the data is used in an algorithm or model to create a better experience or drive more engagement.
+To see more details on the why, check out the [blog post]().
 
-There are largely two different patterns that have different requirements when it comes to streaming data.
+## Running
 
-Event-driven patterns - you care about the single event more than the whole.
-Analytical patterns - you care about many events more than a single event.
+Start clickhouse and redpanda with docker compose
 
-Analytical tasks are traditionally left to the data warehouse, but if your requirement is to surface insights in near real-time, then you need your lowest common denominator to be near real-time. So, you need to move daily or hourly jobs to minutes or seconds.
+```
+$ docker compose up -d
+```
 
-An architectural pattern that I've seen bytewax used for is capturing a swath of disparate input sources, normalizing the structure and maybe doing some pre-aggregation, producing the data to a broker like Redpanda, and then consuming it again downstream of the broker. Oftentimes, these are representative of the analytical patterns, and the user cares about both the aggregate of the events and they care about timeliness. As an example, let's say I have many sensors distributed across a supply chain, I might not be able to reason about what is happening from an individual sensor reading, but the sensors in aggregate and over time tell me if the supply chain is functioning correctly. I also don't need to react to every sensor reading immediately, but I need to passively understand what is going on so I can react immediately for safety or monetary reasons.
+Run the data generator
 
-![architecture](https://github.com/bytewax/streaming-arrow/assets/6073079/4635fd46-d8e7-49c8-bf5a-500249538d72)
+```
+$ python -m bytewax.run src/input.py
+```
 
+Run the output
 
-We have seen Bytewax adopted for its ability to connect disparate data sources, its ease of use, and the availability of analytical libraries.
+```
+$ python -m bytewax.run src/output.py
+```
 
-The proposed solution to the above problem is great (in my opinion 😄) in that it can actually solve two problems at once! First, we will have our data available aggregated and in a format that can be directly used for analytical purposes, whether that be making a prediction or just engineering features for a model. Second, we have made our ingestion task much easier, as we will find out further on in the article!
+inspect the table
 
-### A streaming arrow solution
+```
+$ docker exec -it clickhouse clickhouse-client
+clickhouse :) select * from bytewax.compstat
+```
 
-With the adoption of Kafka as the streaming protocol, Arrow as the in-memory format, and open catalogs for data lakes and lakehouses, we can architect a very friendly and open-source solution.
+## Explanation of the Bytewax Code
 
-Let's get streaming!
+Bytewax is a Python stateful stream processor that is exceptionally flexible in it's ability to integrate with other data tools and infrastructure.
 
-For this example, we are going to borrow from a Bytewax community user who made a solution for the energy company he works for. First, we will use Bytewax to "gather" events from disparate sources and transform them into micro-batches using the Arrow format. We will then write these Arrow tables to a message broker like Redpanda to provide us with some durability, replayability, and any fan-out workloads downstream. Then downstream we can use Bytewax to run real-time alerting or analysis we need and also create another workload that will load our data to a sink like Clickhouse for additional reporting/querying. 
+We have 5 Python files that use Bytewax
 
-What's great is that you could sub in literally any Kafka API-compatible streaming platform and substitute any Sink that is arrow-compatible downstream.
+## Connectors
 
-I don't have many sensors at my disposal, so we can use our own computers :smile:.
+We have two files that are custom connectors that allow you to write arrow out to different Sinks.
+* `adbc_connect.py`
+* `clickhouse_connector.py`
+
+We won't go into depth around how these connectors function. They take pyarrow tables and write them to a clickhouse database.
+
+## Dataflows
+
+We have three files that are Bytewax dataflows. These are piplines.
+
+* `input.py` - capture streaming data
+* `output.py` - write data to datastore with Sink connector
+* `analyze.py` - analyze the streaming data
+
+These are examples of how you would build dataflows to manage the streaming data within your organization using Bytewax. 
+
+### Input.py
+
+The input dataflow is using psutil to generate a datastream for us and writes it to Redpanda or Kafka with the Bytewax built-in Kafka connector.
 
 ```python
 import pyarrow as pa
@@ -46,7 +73,7 @@ import psutil
 
 
 BROKERS = ["localhost:19092"]
-TOPIC = ["arrow_tables"]
+TOPIC = "arrow_tables"
 
 run_start = perf_counter()
 
@@ -97,7 +124,6 @@ BATCH_SIZE = 1000
 N_BATCHES = 10
 table_gen = (sample_batch_wide_table(BATCH_SIZE) for i in range(N_BATCHES))
 
-
 flow = Dataflow("arrow_producer")
 
 # this is only an example. should use window or collect downstream
@@ -105,11 +131,42 @@ tables = op.input("tables", flow, TestingSource(table_gen))
 
 buffers = op.map("string_output", tables, table_to_compressed_buffer)
 messages = op.map("map", buffers, lambda x: KafkaSinkMessage(key=None, value=x))
-op.inspect("message_stat_strings", messages, lambda x: f"-> {len(x.value)} bytes")
+op.inspect("message_stat_strings", messages)
 kop.output("kafka_out", messages, brokers=BROKERS, topic=TOPIC)
 ```
 
-You will notice that we are using Apache Arrow. But wait, why arrow? Isn't this for in-memory tables for columnar data. Well. Yes. But it is also really efficient when we want to avoid copying and serializing the data.
+#### Output.py
 
-Once our data is in an arrow table, we can use it everywhere and with everything!
+The Output pipeline uses Bytewax to write data from Kafka to Clickhouse with a custom connector defined in `src/clickhouse_connector`. This is a proof of concept and doesn't contain the guarantees required for production system. Reach out to the bytewax team @ sales@bytewax.io for details on the premium connector. 
 
+```python
+from bytewax import operators as op
+from bytewax.connectors.kafka import operators as kop
+from bytewax.dataflow import Dataflow
+import pyarrow as pa
+
+from clickhouse_connector import ClickhouseSink
+
+SCHEMA = """
+        device String,
+        ts DateTime,
+        cpu_used Float64,
+        cpu_free Float64,
+        memory_used Float64,
+        memory_free Float64,
+        run_elapsed_ms Int64
+        """
+
+ORDER_BY = "device, ts"
+
+BROKERS = ["localhost:19092"]
+TOPICS = ["arrow_tables"]
+
+flow = Dataflow("kafka_in_out")
+kinp = kop.input("inp", flow, brokers=BROKERS, topics=TOPICS)
+op.inspect("inspect-errors", kinp.errs)
+
+tables = op.map("tables", kinp.oks, lambda msg: pa.ipc.open_file(msg.value).read_all())
+op.inspect("message_stat_strings", tables, lambda _sid, t: f"step_is: {_sid} has data: {t.shape} {t['ts'][0]}")
+op.output("output_clickhouse", tables, ClickhouseSink("compstat", "admin", "password", database="bytewax", port=8123, schema=SCHEMA, order_by=ORDER_BY))
+```
