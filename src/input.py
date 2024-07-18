@@ -9,7 +9,7 @@ import psutil
 
 
 BROKERS = ["localhost:19092"]
-TOPIC = ["arrow_tables"]
+TOPIC = "arrow_tables"
 
 run_start = perf_counter()
 
@@ -67,5 +67,5 @@ tables = op.input("tables", flow, TestingSource(table_gen))
 
 buffers = op.map("string_output", tables, table_to_compressed_buffer)
 messages = op.map("map", buffers, lambda x: KafkaSinkMessage(key=None, value=x))
-op.inspect("message_stat_strings", messages, lambda x: f"-> {len(x.value)} bytes")
+op.inspect("message_stat_strings", messages)
 kop.output("kafka_out", messages, brokers=BROKERS, topic=TOPIC)
